@@ -1,0 +1,99 @@
+networks:
+  default:
+    name: "${NETWORK_ID}"
+    external: false
+
+services:
+  rabbitmq:
+    image: rabbitmq:management
+    restart: unless-stopped
+    container_name: "${PROJECT_NAME}_rabbitmq"
+    depends_on:
+      - traefik
+    labels:
+      - "traefik.http.services.${PROJECT_NAME}_rabbitmq.loadbalancer.server.port=15672"
+      - "traefik.http.routers.${PROJECT_NAME}_rabbitmq.rule=Host(`rabbitmq.${PROJECT_BASE_URL}`)"
+  
+  mongodb:
+    image: mongo:8.0.14-noble # Or a specific version like mongo:6
+    restart: unless-stopped # Restart the container unless manually stopped
+    container_name: "${PROJECT_NAME}_mongodb"
+    depends_on:
+      - traefik
+    ports:
+      - "27017:27017" # Map host port 27017 to container port 27017
+    # volumes:
+      # - ./mongodb-data:/data/db # Persist data using a named volume
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongoadmin
+      - MONGO_INITDB_ROOT_PASSWORD=secret
+
+
+  api:
+    image: wodby/node:$NODE_TAG
+    container_name: "${PROJECT_NAME}_api"
+    depends_on:
+      - mongodb
+    working_dir: /app
+    labels:
+    - "traefik.http.services.${PROJECT_NAME}_api.loadbalancer.server.port=4000"
+    - "traefik.http.routers.${PROJECT_NAME}_api.rule=Host(`api.${PROJECT_BASE_URL}`)"
+    expose:
+    - "4000"
+    volumes:
+    - ./api:/app
+    command: sh -c 'npm install && npm run start'
+  
+  web:
+    image: wodby/node:$NODE_TAG
+    container_name: "${PROJECT_NAME}_web"
+    depends_on:
+      - api
+    working_dir: /app
+    labels:
+    - "traefik.http.services.${PROJECT_NAME}_web.loadbalancer.server.port=5173"
+    - "traefik.http.routers.${PROJECT_NAME}_web.rule=Host(`web.${PROJECT_BASE_URL}`)"
+    expose:
+    - "3000"
+    volumes:
+    - ./web:/app
+    command: sh -c 'npm install && npm run dev'
+
+  nginx:
+    image: wodby/nginx:$NGINX_TAG
+    container_name: "${PROJECT_NAME}_nginx"
+    depends_on:
+    - api
+    restart: unless-stopped
+    environment:
+      NGINX_STATIC_OPEN_FILE_CACHE: "off"
+      NGINX_ERROR_LOG_LEVEL: debug
+      NGINX_VHOST_PRESET: html
+      # NGINX_BACKEND_HOST: python
+      # Use this if you don't need Django's media/static locations.
+      #NGINX_VHOST_PRESET: http-proxy
+    volumes:
+    - ./web/dist:/var/www/html
+    ## Alternative for macOS users: Mutagen https://wodby.com/docs/stacks/python/local#docker-for-mac
+    #    - backend:/usr/src/app
+    labels:
+    - "traefik.http.routers.${PROJECT_NAME}_nginx.rule=Host(`${PROJECT_BASE_URL}`)"
+  
+  mailpit:
+    image: axllent/mailpit
+    container_name: "${PROJECT_NAME}_mailpit"
+    labels:
+    - "traefik.http.services.${PROJECT_NAME}_mailpit.loadbalancer.server.port=8025"
+    - "traefik.http.routers.${PROJECT_NAME}_mailpit.rule=Host(`mailpit.${PROJECT_BASE_URL}`)"
+
+  traefik:
+    image: traefik:v2.0
+    restart: unless-stopped
+    container_name: "${PROJECT_NAME}_traefik"
+    command: --api.insecure=true --providers.docker --accesslog=true --accesslog.filepath=/app/traefik-access.log
+    ports:
+      - '80:80'
+      - '8080:8080' # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/app
