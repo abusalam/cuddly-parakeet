@@ -1,0 +1,6 @@
+[submodule "api"]
+	path = api
+	url = git@github.com:arabindahazra/PatientManagement_Backend.git
+[submodule "web"]
+	path = web
+	url = git@github.com:arabindahazra/PatientManagement_frontend.git
